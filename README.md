@@ -7,6 +7,9 @@
 How good was that exploration run? Score any ROS 2 exploration against a ground-truth map: coverage, wall accuracy, and time to 25/50/75/90 %.
 
 ```bash
+# ground truth straight from a Gazebo world file (no SLAM run needed)
+ros2 run nav_explore_eval nav_explore_eval truth-from-world maze.world --out maze_truth --seed 0 0
+
 # live: watch /map while any explorer runs, write a JSON report
 ros2 run nav_explore_eval nav_explore_eval record --truth truth.yaml --label explore_lite --out lite.json --align
 
@@ -33,5 +36,7 @@ Exploration papers and packages each report different numbers. This tool gives o
 - **Time-to-percent**: interpolated time to reach each coverage level, plus path length from `/odom`.
 
 Align is translation-only: a SLAM run that is rotated against the truth map needs `--offset` or a re-saved map. Maps from two different SLAM runs of the same world can score low on wall F1 even when they look alike, so raise `--tol` when comparing runs.
+
+- **Ground truth from the world file** (`truth-from-world`): rasterises the box and cylinder collisions that cross the lidar height, and counts as explorable only the free space reachable from `--seed` (the robot spawn). Walls, ramps and furniture below `--z` are ignored; meshes are not supported yet.
 
 Build: `colcon build --packages-select nav_explore_eval`. Tests: `python3 -m pytest test` (the live `record` tests run when ROS 2 is sourced).

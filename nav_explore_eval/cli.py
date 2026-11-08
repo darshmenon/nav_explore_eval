@@ -25,6 +25,15 @@ def _row(path):
             f"{r['path_length_m']:.1f}"] + [('-' if tt[str(p)] is None else f'{tt[str(p)]:.0f}') for p in TIME_TO]
 
 
+def cmd_truth(a):
+    from .worldmap import rasterize, shapes, write_map
+    g = rasterize(shapes(open(a.world).read(), a.z), a.res, a.margin, tuple(a.seed))
+    write_map(g, a.out)
+    free = (g.data == 0).sum() * g.resolution ** 2
+    print(f'wrote {a.out}.yaml / .pgm  ({g.shape[1]}x{g.shape[0]} @ {g.resolution} m, explorable area {free:.1f} m2)')
+    return 0
+
+
 def cmd_compare(a):
     head = ['label', 'cov%', 'f1%', 'leak%', 'path_m'] + [f't{p}%(s)' for p in TIME_TO]
     rows = [head] + [_row(p) for p in a.reports]
@@ -109,6 +118,12 @@ def main(argv=None):
     s.add_argument('--max-shift', type=float, default=3.0)
     s.add_argument('--tol', type=float, default=0.10, help='wall match tolerance in metres')
     s.add_argument('--json', action='store_true')
+    t = sub.add_parser('truth-from-world', help='exact ground-truth map from a Gazebo/SDF world file')
+    t.add_argument('world'); t.add_argument('--out', required=True, help='output prefix (writes .pgm + .yaml)')
+    t.add_argument('--res', type=float, default=0.05); t.add_argument('--margin', type=float, default=1.0)
+    t.add_argument('--z', type=float, default=0.2, help='lidar height: only collisions crossing it are walls')
+    t.add_argument('--seed', type=float, nargs=2, default=(0.0, 0.0), metavar=('X', 'Y'),
+                   help='a free point (robot spawn); free space = what is reachable from it')
     c = sub.add_parser('compare', help='table (and chart) comparing recorded runs')
     c.add_argument('reports', nargs='+'); c.add_argument('--png')
     r = sub.add_parser('record', help='watch a live /map and score it over time')
@@ -124,6 +139,12 @@ def main(argv=None):
         return cmd_score(a)
     if a.cmd == 'compare':
         return cmd_compare(a)
+    if a.cmd == 'truth-from-world':
+        try:
+            return cmd_truth(a)
+        except (ValueError, OSError) as e:
+            print(f'error: {e}', file=sys.stderr)
+            return 2
     return cmd_record(a, ros_args)
 
 
