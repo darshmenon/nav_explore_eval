@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>nav_explore_eval</name>
-  <version>0.2.0</version>
+  <version>0.3.0</version>
   <description>Score any ROS 2 exploration run on coverage, map accuracy and time-to-percent.</description>
   <maintainer email="darshmenon02@gmail.com">darshmenon</maintainer>
   <license>Apache-2.0</license>

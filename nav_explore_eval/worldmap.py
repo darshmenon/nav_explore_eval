@@ -1,6 +1,8 @@
 """Exact ground-truth occupancy map from a Gazebo/SDF world: rasterise box and cylinder collisions."""
 import math
+import os
 import re
+import sys
 import xml.etree.ElementTree as ET
 from collections import deque
 
@@ -23,30 +25,163 @@ def _compose(a, b):
     return ax + c * bx - s * by, ay + s * bx + c * by, ayaw + byaw
 
 
-def shapes(world_text, z=0.2):
-    """[(kind, cx, cy, yaw, dims)] for collisions that intersect the horizontal plane at height `z`."""
+def _scale(geo_el):
+    t = geo_el.findtext('scale')
+    v = [float(x) for x in t.split()] if t else [1.0, 1.0, 1.0]
+    return (v + [1.0] * 3)[:3]
+
+
+def _model_dirs(model_paths):
+    dirs = [d for d in model_paths if d]
+    for var in ('GAZEBO_MODEL_PATH', 'GZ_SIM_RESOURCE_PATH', 'IGN_GAZEBO_RESOURCE_PATH', 'SDF_PATH'):
+        dirs += [d for d in os.environ.get(var, '').split(os.pathsep) if d]
+    dirs += [os.path.expanduser('~/.gazebo/models'), os.path.expanduser('~/.gz/models')]
+    return dirs
+
+
+def _resolve_uri(uri, model_paths, base_dir):
+    """model://name[/rest], file:///abs, or a relative path -> existing local path, else None."""
+    uri = uri.strip()
+    if uri.startswith('model://'):
+        rel = uri[len('model://'):]
+        for d in _model_dirs(model_paths) + ([base_dir] if base_dir else []):
+            cand = os.path.join(d, rel)
+            if os.path.exists(cand):
+                return cand
+        return None
+    if uri.startswith('file://'):
+        uri = uri[len('file://'):]
+    for cand in ([uri] if os.path.isabs(uri) else [os.path.join(base_dir or '.', uri)]):
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+def mesh_bounds(path):
+    """Axis-aligned bounds ((x0,y0,z0),(x1,y1,z1)) of an .obj, .stl or .dae mesh, in metres, Z up."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext == '.obj':
+        pts = []
+        for line in open(path, errors='ignore'):
+            if line.startswith('v '):
+                pts.append([float(t) for t in line.split()[1:4]])
+        v = np.array(pts)
+    elif ext == '.stl':
+        raw = open(path, 'rb').read()
+        n = int.from_bytes(raw[80:84], 'little') if len(raw) >= 84 else -1
+        if len(raw) == 84 + 50 * n:                                    # binary
+            rec = np.frombuffer(raw[84:], dtype=np.dtype([('n', '<f4', 3), ('v', '<f4', (3, 3)), ('a', '<u2')]))
+            v = rec['v'].reshape(-1, 3).astype(float)
+        else:                                                         # ascii
+            v = np.array([[float(t) for t in ln.split()[1:4]] for ln in raw.decode(errors='ignore').splitlines()
+                          if ln.strip().startswith('vertex')])
+    elif ext == '.dae':
+        root = ET.fromstring(re.sub(rb'\sxmlns="[^"]+"', b'', open(path, 'rb').read(), count=1))
+        arrs = [a for a in root.iter('float_array') if 'position' in (a.get('id') or '').lower()]
+        if not arrs:
+            raise ValueError(f'{path}: no vertex positions found')
+        v = np.vstack([np.array(a.text.split(), dtype=float).reshape(-1, 3) for a in arrs])
+        unit = root.find('asset/unit')
+        if unit is not None and unit.get('meter'):
+            v = v * float(unit.get('meter'))
+        if (root.findtext('asset/up_axis') or 'Z_UP').strip() == 'Y_UP':
+            v = np.stack([v[:, 0], -v[:, 2], v[:, 1]], axis=1)
+    else:
+        raise ValueError(f'{path}: unsupported mesh format {ext}')
+    if v.size == 0:
+        raise ValueError(f'{path}: empty mesh')
+    return v.min(axis=0), v.max(axis=0)
+
+
+def shapes(world_text, z=0.2, model_paths=(), base_dir=None, warn=None):
+    """[(kind, cx, cy, yaw, dims)] for collisions that intersect the horizontal plane at height `z`.
+    Handles nested models, <include> (model:// from `model_paths`, $GAZEBO_MODEL_PATH, ...), box, cylinder
+    and mesh (.obj/.stl/.dae, as its bounding box) collisions. `warn(msg)` reports what was skipped."""
+    warn = warn or (lambda m: print(f'warning: {m}', file=sys.stderr))
     root = ET.fromstring(re.sub(r'<\?xml[^>]*\?>', '', world_text).strip())
     out = []
-    for model in root.iter('model'):
-        mx, my, myaw, mz = _pose(model)
-        for link in model.findall('link'):
+
+    def collision(col, frame, zc0, model_dir):
+        cx, cy, cyaw, cz = _pose(col)
+        geo = col.find('geometry')
+        if geo is None:
+            return
+        x, y, yaw = _compose(frame, (cx, cy, cyaw))
+        zc = zc0 + cz
+        box, cyl, mesh = geo.find('box/size'), geo.find('cylinder'), geo.find('mesh')
+        if box is not None:
+            sx, sy, sz = (float(t) for t in box.text.split())
+            if abs(z - zc) <= sz / 2:
+                out.append(('box', x, y, yaw, (sx, sy)))
+        elif cyl is not None:
+            r, h = float(cyl.findtext('radius')), float(cyl.findtext('length'))
+            if abs(z - zc) <= h / 2:
+                out.append(('cyl', x, y, yaw, (r,)))
+        elif mesh is not None:
+            uri = mesh.findtext('uri')
+            path = _resolve_uri(uri, model_paths, model_dir or base_dir) if uri else None
+            if path is None:
+                warn(f'mesh not found, skipped: {uri}')
+                return
+            try:
+                lo, hi = mesh_bounds(path)
+            except (ValueError, OSError, ET.ParseError) as e:
+                warn(f'mesh skipped: {e}')
+                return
+            sc = np.array(_scale(mesh))
+            lo, hi = lo * sc, hi * sc
+            if not (zc + lo[2] <= z <= zc + hi[2]):
+                return
+            mx, my, _ = _compose((x, y, yaw), ((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, 0.0))
+            out.append(('box', mx, my, yaw, (float(hi[0] - lo[0]), float(hi[1] - lo[1]))))
+        elif geo.find('heightmap') is not None:
+            warn('heightmap collisions are not supported, skipped')
+
+    def model(el, parent, zp, model_dir, depth=0):
+        if depth > 8:
+            return
+        mx, my, myaw, mz = _pose(el)
+        frame, zb = _compose(parent, (mx, my, myaw)), zp + mz
+        for link in el.findall('link'):
             lx, ly, lyaw, lz = _pose(link)
+            lf = _compose(frame, (lx, ly, lyaw))
             for col in link.findall('collision'):
-                cx, cy, cyaw, cz = _pose(col)
-                geo = col.find('geometry')
-                if geo is None:
-                    continue
-                x, y, yaw = _compose(_compose((mx, my, myaw), (lx, ly, lyaw)), (cx, cy, cyaw))
-                zc = mz + lz + cz
-                box, cyl = geo.find('box/size'), geo.find('cylinder')
-                if box is not None:
-                    sx, sy, sz = (float(t) for t in box.text.split())
-                    if abs(z - zc) <= sz / 2:
-                        out.append(('box', x, y, yaw, (sx, sy)))
-                elif cyl is not None:
-                    r, h = float(cyl.findtext('radius')), float(cyl.findtext('length'))
-                    if abs(z - zc) <= h / 2:
-                        out.append(('cyl', x, y, yaw, (r,)))
+                collision(col, lf, zb + lz, model_dir)
+        for sub in el.findall('model'):
+            model(sub, frame, zb, model_dir, depth + 1)
+        for inc in el.findall('include'):
+            include(inc, frame, zb, depth + 1)
+
+    def include(inc, parent, zp, depth):
+        uri = inc.findtext('uri')
+        path = _resolve_uri(uri, model_paths, base_dir) if uri else None
+        if path is None:
+            warn(f'include not found, skipped: {uri}')
+            return
+        mdir = path if os.path.isdir(path) else os.path.dirname(path)
+        sdf = path
+        if os.path.isdir(path):
+            sdf = os.path.join(path, 'model.sdf')
+            if not os.path.exists(sdf):
+                found = sorted(f for f in os.listdir(path) if f.endswith('.sdf'))
+                sdf = os.path.join(path, found[0]) if found else None
+        if not sdf:
+            warn(f'no .sdf in {path}, skipped')
+            return
+        sub = ET.fromstring(re.sub(r'<\?xml[^>]*\?>', '', open(sdf).read()).strip())
+        el = sub if sub.tag == 'model' else sub.find('.//model')
+        if el is None:
+            return
+        ix, iy, iyaw, iz = _pose(inc)
+        f = _compose(parent, (ix, iy, iyaw))
+        model(el, f, zp + iz, mdir, depth)
+
+    world = root.find('world') if root.tag != 'world' else root
+    holder = world if world is not None else root
+    for m in holder.findall('model'):
+        model(m, (0.0, 0.0, 0.0), 0.0, base_dir)
+    for inc in holder.findall('include'):
+        include(inc, (0.0, 0.0, 0.0), 0.0, 0)
     return out
 
 
