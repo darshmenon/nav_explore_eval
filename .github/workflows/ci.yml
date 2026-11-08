@@ -30,4 +30,4 @@ jobs:
           mkdir -p /tmp/ws/src && cp -r "$GITHUB_WORKSPACE" /tmp/ws/src/nav_explore_eval && cd /tmp/ws
           colcon build --packages-select nav_explore_eval
           source install/setup.bash && ros2 run nav_explore_eval nav_explore_eval --version
-          cd src/nav_explore_eval && (python3 -m pytest --version >/dev/null 2>&1 || apt-get update -qq && apt-get install -y -qq python3-pytest) && python3 -m pytest -q test
+          cd src/nav_explore_eval && (apt-get update -qq && apt-get install -y -qq python3-pytest python3-matplotlib) && python3 -m pytest -q test
