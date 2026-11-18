@@ -293,3 +293,15 @@ def test_bag_with_ground_truth_pose(tmp_path):
     assert p.returncode == 0, p.stdout + p.stderr
     loc = json.loads(out.read_text())['localisation']
     assert 0 < loc['ate_rmse_m'] < 0.2 and loc['pairs'] >= 18 and 'localisation' in p.stdout
+
+
+def test_rpe_zero_for_identical_and_nonzero_for_scale_drift():
+    from nav_explore_eval.metrics import localisation_error
+    gt = [(i * 0.1, i * 0.1, 0.0) for i in range(100)]
+    r = localisation_error(gt, gt)
+    assert r['rpe_rmse_m'] < 1e-9 and r['rpe_pairs'] > 0
+    est = [(t, x * 1.1, y) for t, x, y in gt]          # 10 % scale drift
+    r = localisation_error(est, gt, align=False)
+    assert 0.03 < r['rpe_rmse_m'] < 0.15
+    short = [(i * 0.1, i * 0.01, 0.0) for i in range(20)]
+    assert 'rpe_rmse_m' not in localisation_error(short, short)   # path shorter than 1 m

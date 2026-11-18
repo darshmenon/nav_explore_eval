@@ -192,7 +192,9 @@ def cmd_bag(a, ros_args):
     json.dump(rep, open(a.out, 'w'), indent=2)
     f = rep['final']
     if 'localisation' in rep:
-        print(f"localisation: ATE rmse {rep['localisation']['ate_rmse_m']:.3f} m, drift {rep['localisation']['drift_pct'] or 0:.1f}%")
+        print(f"localisation: ATE rmse {rep['localisation']['ate_rmse_m']:.3f} m, drift {rep['localisation']['drift_pct'] or 0:.1f}%"
+              + (f", RPE {rep['localisation']['rpe_rmse_m']:.3f} m/{rep['localisation']['rpe_delta_m']:g} m"
+                 if 'rpe_rmse_m' in rep['localisation'] else ''))
     print(f"scored {len(rep['series'])} samples over {rep['duration_s']:.0f}s: coverage {f['coverage_pct']:.1f}% "
           f"f1 {f['wall_f1_pct']:.1f}%  -> {a.out}")
     return 0

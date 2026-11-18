@@ -83,7 +83,7 @@ Combining with fault injection: [docs/integrations.md](docs/integrations.md).
 - `truth-from-world` reads boxes, cylinders and meshes (as bounding boxes, so concave meshes are filled in); heightmaps and `<polyline>` are skipped with a warning.
 - Two SLAM runs of the same world can score low on wall F1 even when they look alike. Raise `--tol` when comparing runs against each other, and prefer a world-file truth.
 - Multi-robot assumes all maps share one frame (each is aligned to the truth separately).
-- Localisation error (ATE) pairs poses by nearest time within 0.25 s and rigidly fits the trajectory first, so it measures drift, not frame offset. It compares `/odom` to your ground-truth topic.
+- Localisation error (ATE) pairs poses by nearest time within 0.25 s and rigidly fits the trajectory first, so it measures drift, not frame offset. It also reports translational RPE over 1 m of path (`rpe_rmse_m`), a frame-independent local drift measure. It compares `/odom` to your ground-truth topic.
 
 ## Roadmap
 
