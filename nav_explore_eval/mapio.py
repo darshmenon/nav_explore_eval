@@ -59,5 +59,9 @@ def load_yaml_map(yaml_path):
     g = np.full(p.shape, -1, dtype=np.int8)
     g[p > occ_t] = 100
     g[p < free_t] = 0
+    # Nav2's map_saver writes unknown as grey 205 (p = 0.196), which a free_thresh of 0.25 would read as FREE
+    # and inflate coverage. Trinary maps keep unknown as unknown.
+    if str(y.get('mode', 'trinary')) == 'trinary':
+        g[np.abs(v - 205.0 / 255.0) < 0.005] = -1
     g = g[::-1].copy()                                  # image row 0 is top
     return Grid(g, float(y['resolution']), float(y['origin'][0]), float(y['origin'][1]))
