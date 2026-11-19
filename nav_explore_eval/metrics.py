@@ -16,7 +16,8 @@ def resample(live: Grid, truth: Grid, dx=0.0, dy=0.0, yaw=0.0):
         j = np.floor((xs - live.ox) / live.resolution).astype(int)
         i = np.floor((ys - live.oy) / live.resolution).astype(int)
         out = np.full((h, w), -1, dtype=np.int8)
-        ok_i = (i >= 0) & (i < live.shape[0]); ok_j = (j >= 0) & (j < live.shape[1])
+        ok_i = (i >= 0) & (i < live.shape[0])
+        ok_j = (j >= 0) & (j < live.shape[1])
         out[np.ix_(ok_i, ok_j)] = live.data[np.ix_(i[ok_i], j[ok_j])]
         return out
     X, Y = np.meshgrid(xs, ys)

@@ -36,7 +36,8 @@ def _read_pgm(path):
         end = pos
         while not raw[end:end + 1].isspace():
             end += 1
-        toks.append(raw[pos:end]); pos = end
+        toks.append(raw[pos:end])
+        pos = end
     magic, w, h, mx = toks[0], int(toks[1]), int(toks[2]), int(toks[3])
     if magic == b'P5':
         pix = np.frombuffer(raw[pos + 1:pos + 1 + w * h], dtype=np.uint8)
